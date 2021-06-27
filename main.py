@@ -5,4 +5,8 @@ import handlers.entry_handlers
 import handlers.worker_handlers
 from bot import *
 
-bot.polling(none_stop=True)
+while True:
+    try:
+        bot.polling(none_stop=True)
+    except:
+        pass
