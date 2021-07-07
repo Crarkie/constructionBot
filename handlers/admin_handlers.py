@@ -94,9 +94,11 @@ def super_admin_callback_handler(callback: CallbackQuery):
         bot.set_state('main_menu', int(add_data))
 
         remove_msgs(int(add_data), True)
-        bot.answer_callback_query(callback.id, texts['user_worker'])
-
-        DbUser.create(user_id=int(add_data), role='worker', language=DEFAULT_LANGUAGE, name=request_data['name'])
+        try:
+            DbUser.create(user_id=int(add_data), role='worker', language=DEFAULT_LANGUAGE, name=request_data['name'])
+            bot.answer_callback_query(callback.id, texts['user_worker'])
+        except:
+            pass
     elif data == 'add_request_admin':
         remove_msg(callback.from_user.id, callback.message.id)
         send_removing_message(int(add_data), texts['user_request_admin'], reply_markup=admin_menu_reply(int(add_data)))
@@ -224,7 +226,8 @@ def admin_action_callback_handler(callback: CallbackQuery):
             bot.send_photo(task.added_by.user_id, task.task_photo.file_id,
                            texts['completed_task'].format(worker_name=name,
                                                           task_number=task.task_number,
-                                                          task_text=task.task_text),
+                                                          task_text=task.task_text,
+                                                          result_text=task.task_result_text),
                            reply_markup=reply, parse_mode='HTML')
         remove_msg(callback.from_user.id, callback.message.message_id)
     elif action == 'cancel_confirm_task':
@@ -861,7 +864,7 @@ def admin_documents_calendar_handler(callback: CallbackQuery):
             bot.update_data({'date': [date.year, date.month, date.day]}, callback.from_user.id)
 
             pager = EntityPager(callback.from_user.id, query,
-                                lambda e: get_plain_user_name(e), lambda e: e.worker.user_id, 'user')
+                                lambda e: get_plain_user_name(e.worker), lambda e: e.worker.user_id, 'user')
             pager.first_page()
             bot.send_message(callback.from_user.id, texts['doc_tasks_choose_user'], reply_markup=pager(),
                              parse_mode='HTML')
@@ -1031,7 +1034,7 @@ def admin_list_tasks_docs_handler(callback: CallbackQuery):
             bot.update_data({'date': [date.year, date.month, date.day]}, callback.from_user.id)
 
             pager = EntityPager(callback.from_user.id, query,
-                                lambda e: get_plain_user_name(e), lambda e: e.worker.user_id, 'user')
+                                lambda e: get_plain_user_name(e.worker), lambda e: e.worker.user_id, 'user')
             bot.send_message(callback.from_user.id, texts['doc_tasks_choose_user'], reply_markup=pager(),
                              parse_mode='HTML')
             remove_msgs(callback.from_user.id, True)
@@ -1087,7 +1090,7 @@ def admin_tasks_menu_handler(callback: CallbackQuery):
         for worker in task_workers:
             user = worker.worker
             chat = bot.get_chat(user.user_id)
-            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
             i += 1
 
         if entity.task_photo is None:
@@ -1123,7 +1126,7 @@ def admin_tasks_menu_handler(callback: CallbackQuery):
         for worker in task_workers:
             user = worker.worker
             chat = bot.get_chat(user.user_id)
-            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
             i += 1
 
         if entity.task_photo is None:
@@ -1218,7 +1221,7 @@ def admin_list_tasks_handler(callback: CallbackQuery):
         for worker in task_workers:
             user = worker.worker
             chat = bot.get_chat(user.user_id)
-            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
             i += 1
         if entity.task_photo is None:
             send_removing_message(callback.from_user.id, text,
@@ -1256,7 +1259,7 @@ def admin_task_actions_menu_handler(callback: CallbackQuery):
         for worker in task_workers:
             user = worker.worker
             chat = bot.get_chat(user.user_id)
-            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
             i += 1
 
         if entity.task_photo is None:
@@ -1348,7 +1351,7 @@ def send_added_worker_notify(task_id, worker_id):
     for worker in task_workers:
         user = worker.worker
         chat = bot.get_chat(user.user_id)
-        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
         i += 1
 
     reply = InlineKeyboardMarkup()
@@ -1547,7 +1550,7 @@ def send_deleted_worker_notify(task_id, worker_id):
     for worker in task_workers:
         user = worker.worker
         chat = bot.get_chat(user.user_id)
-        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
         i += 1
 
     reply = InlineKeyboardMarkup()
@@ -1584,7 +1587,7 @@ def send_replaced_worker_notify(task_id, replaced_user_id, user_id):
     for worker in task_workers:
         user = worker.worker
         chat = bot.get_chat(user.user_id)
-        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
         i += 1
 
     reply = InlineKeyboardMarkup()
@@ -1799,7 +1802,7 @@ def send_cancel_task_notify(task: Task):
     for worker in task_workers:
         user = worker.worker
         chat = bot.get_chat(user.user_id)
-        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
         i += 1
 
     reply = InlineKeyboardMarkup()
@@ -1841,10 +1844,10 @@ def create_notifies(task: Task):
     for worker in task_workers:
         user = worker.worker
         chat = bot.get_chat(user.user_id)
-        text_hour += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
-        text_day += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
-        text_half += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
-        text_expired += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        text_hour += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
+        text_day += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
+        text_half += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
+        text_expired += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
         i += 1
 
     if task.end_date - datetime.now() > timedelta(hours=1):
@@ -1872,7 +1875,7 @@ def send_task_notify(task: Task):
     for worker in task_workers:
         user = worker.worker
         chat = bot.get_chat(user.user_id)
-        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
         i += 1
 
     reply = InlineKeyboardMarkup()
@@ -1946,7 +1949,7 @@ def admin_new_task_choose_worker(callback: CallbackQuery):
             for worker in workers:
                 user = DbUser.get(worker)
                 chat = bot.get_chat(worker)
-                text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+                text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
                 i += 1
 
             send_removing_message(callback.from_user.id, text, reply_markup=reply, parse_mode='HTML')
@@ -1969,7 +1972,7 @@ def admin_new_task_choose_worker(callback: CallbackQuery):
             for worker in workers:
                 user = DbUser.get(worker)
                 chat = bot.get_chat(worker)
-                text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+                text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
                 i += 1
 
             send_removing_message(callback.from_user.id, text, reply_markup=reply, parse_mode='HTML')
@@ -2181,7 +2184,7 @@ def admin_search_params_handler(callback: CallbackQuery):
         for worker in task_workers:
             user = worker.worker
             chat = bot.get_chat(user.user_id)
-            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
             i += 1
 
         if entity.task_photo is None:

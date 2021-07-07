@@ -87,7 +87,7 @@ def worker_main_menu_handler(msg: Message):
             for worker in task_workers:
                 user = worker.worker
                 chat = bot.get_chat(user.user_id)
-                text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+                text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
                 i += 1
 
             if entity.task_photo is None:
@@ -272,7 +272,7 @@ def admin_list_tasks_handler(callback: CallbackQuery):
         for worker in task_workers:
             user = worker.worker
             chat = bot.get_chat(user.user_id)
-            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
             i += 1
         if entity.task_photo is None:
             send_removing_message(callback.from_user.id, text,
@@ -319,7 +319,7 @@ def worker_task_actions_handler(callback: CallbackQuery):
             for worker in task_workers:
                 user = worker.worker
                 chat = bot.get_chat(user.user_id)
-                text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+                text += str(i) + ') <b>' + user.name + '</b> (<i>@' + str(chat.username) + '</i>).\n'
                 i += 1
 
             if entity.task_photo is None:
@@ -439,7 +439,8 @@ def send_complete_task(task_id, user_id, photo_id, invoice_id, result_text):
         bot.send_photo(task.added_by.user_id, task.task_photo.file_id,
                        texts['completed_task'].format(worker_name=name,
                                                       task_number=task.task_number,
-                                                      task_text=task.task_text),
+                                                      task_text=task.task_text,
+                                                      result_text=task.task_result_text),
                        reply_markup=reply, parse_mode='HTML')
 
 
