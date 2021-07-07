@@ -2,17 +2,111 @@ from datetime import timedelta
 
 import bot
 from bot import *
-from calendar_view import CalendarView
+from helpers.calendar_view import CalendarView
 from common.tg_utils import *
-from entity_pager import EntityPager
+from helpers.entity_pager import EntityPager
 from texts import get_texts, DEFAULT_LANGUAGE
 from common.models import *
 from common.models import Invoice as DbInvoice
 from common.models_helpers import *
-from worker_handlers import worker_menu_reply
+from handlers.worker_handlers import worker_menu_reply
 
 ADMIN_MAIN_MENU = ['requests', 'tasks', 'documents']
 SUPER_ADMIN_MAIN_MENU = ADMIN_MAIN_MENU + ['users']
+
+
+def get_user_name(user: Union[int, DbUser]):
+    if isinstance(user, int):
+        user = DbUser.get(user)
+
+    username = bot.get_chat(user.user_id).username
+    if not username:
+        s = f'{user.name} (<i>username отс.</i>)'
+    else:
+        s = f'{user.name} (<i>@{username}</i>)'
+    return s
+
+
+def get_plain_user_name(user: Union[int, DbUser]):
+    if isinstance(user, int):
+        user = DbUser.get(user)
+
+    username = bot.get_chat(user.user_id).username
+    if not username:
+        s = f'{user.name} (username отс.)'
+    else:
+        s = f'{user.name} (@{username})'
+    return s
+
+
+def check_return_user_menu(user_id):
+    data = storage.get_data(user_id)
+    if data.get('search_mode', False):
+        texts = get_user_texts(user_id)
+        user = storage.get_data(user_id)['selected']
+        user_entity = DbUser.get(user)
+
+        bot.update_data({'selected': user, 'search_mode': False}, user_id)
+        reply = InlineKeyboardMarkup(row_width=1)
+        if user_entity.role == 'worker':
+            reply.add(InlineKeyboardButton(texts['user_menu_make_admin'], callback_data='make_admin'))
+            reply.add(InlineKeyboardButton(texts['reports'], callback_data='worker_reports'))
+        else:
+            reply.add(InlineKeyboardButton(texts['user_menu_make_worker'], callback_data='make_worker'))
+        reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+
+        username = bot.get_chat(user).username
+        send_removing_message(user_id,
+                              texts['user_menu_entity'].format(name=get_user_name(user_entity),
+                                                               username=username,
+                                                               role=texts[user_entity.role]),
+                              reply_markup=reply, parse_mode='HTML')
+        remove_msgs(user_id, True)
+        bot.set_state('users_menu_entity', user_id)
+        return True
+    return False
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('add_request') and is_super_admin(c))
+def super_admin_callback_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+
+    data = callback.data
+    add_data = None
+    if ':' in data:
+        add_data = data.split(':')[-1]
+        data = data.split(':')[0]
+
+    try:
+        request_data = storage.get_data(int(add_data))
+    except:
+        return
+
+    if data == 'add_request_decline':
+        remove_msg(callback.from_user.id, callback.message.id)
+        send_removing_message(int(add_data), texts['user_request_declined'])
+        remove_msgs(int(add_data), True)
+        bot.answer_callback_query(callback.id, texts['user_declined'])
+    elif data == 'add_request_worker':
+        remove_msg(callback.from_user.id, callback.message.id)
+        send_removing_message(int(add_data), texts['user_request_worker'],
+                              reply_markup=worker_menu_reply(int(add_data)))
+        bot.set_state('main_menu', int(add_data))
+
+        remove_msgs(int(add_data), True)
+        bot.answer_callback_query(callback.id, texts['user_worker'])
+
+        DbUser.create(user_id=int(add_data), role='worker', language=DEFAULT_LANGUAGE, name=request_data['name'])
+    elif data == 'add_request_admin':
+        remove_msg(callback.from_user.id, callback.message.id)
+        send_removing_message(int(add_data), texts['user_request_admin'], reply_markup=admin_menu_reply(int(add_data)))
+        bot.set_state('main_menu', int(add_data))
+
+        remove_msgs(int(add_data), True)
+        bot.answer_callback_query(callback.id, texts['user_admin'])
+
+        DbUser.create(user_id=int(add_data), role='admin', language=DEFAULT_LANGUAGE, name=request_data['name'])
+
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith('notify_'))
 def notify_handler(callback: CallbackQuery):
@@ -20,12 +114,13 @@ def notify_handler(callback: CallbackQuery):
         bot.answer_callback_query(callback.id)
         remove_msg(callback.from_user.id, callback.message.message_id)
 
+
 def send_confirmed_task(task: Task):
     texts = get_texts(DEFAULT_LANGUAGE)
 
     date = task.end_date.strftime('%H:%M %d.%m.%Y')
     deadline = task.deadline_date.strftime('%H:%M %d.%m.%Y')
-    executor = f'{task.end_by_worker.name} (<i>@{bot.get_chat(task.end_by_worker.user_id).username}</i>)'
+    executor = get_user_name(task.end_by_worker)
     text = texts['confirmed_task_notify'].format(task_number=task.task_number,
                                                  executor_name=executor,
                                                  result_text=task.task_result_text,
@@ -60,7 +155,7 @@ def admin_action_callback_handler(callback: CallbackQuery):
         user_id = int(data.split(':')[3])
         admin = bot.get_chat(callback.from_user.id)
         admin_user = DbUser.get(callback.from_user.id)
-        admin = f'<b>{admin_user.name}</b> (<i>@{admin.username}</i>)'
+        admin = get_user_name(admin_user)
         task = Task.get(int(data.split(':')[2]))
 
         reply = InlineKeyboardMarkup()
@@ -118,7 +213,7 @@ def admin_action_callback_handler(callback: CallbackQuery):
                                  callback_data=f'admin_action:cancel_confirm_task:{task_id}'))
 
         chat = bot.get_chat(user_id)
-        name = f'{user.name} (<i>@{chat.username}</i>)'
+        name = get_user_name(user)
         if task.task_photo is None:
             bot.send_message(task.added_by.user_id, texts['completed_task'].format(worker_name=name,
                                                                                    task_number=task.task_number,
@@ -146,7 +241,7 @@ def admin_action_callback_handler(callback: CallbackQuery):
 
         admin = DbUser.get(callback.from_user.id)
         chat = bot.get_chat(admin.user_id)
-        admin = f'{admin.name} (<i>@{chat.username}</i>'
+        admin = get_user_name(admin)
 
         reply = InlineKeyboardMarkup()
         reply.add(InlineKeyboardButton(texts['close_notify'], callback_data='notify_close'))
@@ -220,7 +315,7 @@ def admin_main_menu_handler(msg: Message):
 
     if msg.text == texts['users'] and is_super_admin(msg):
         query = DbUser.select().where(DbUser.user_id != msg.from_user.id)
-        pager = EntityPager(msg.from_user.id, query, lambda e: str(e.name), lambda e: e.user_id, 'user')
+        pager = EntityPager(msg.from_user.id, query, lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
 
         send_removing_message(msg.from_user.id, texts['users_menu'], reply_markup=pager())
         remove_msgs(msg.from_user.id, True)
@@ -228,7 +323,8 @@ def admin_main_menu_handler(msg: Message):
     elif msg.text == texts['tasks']:
         reply = InlineKeyboardMarkup(row_width=1)
         reply.add(InlineKeyboardButton(texts['make_new_task'], callback_data='make_new_task'))
-        reply.add(InlineKeyboardButton(texts['list_tasks'], callback_data='list_tasks'))
+        reply.add(InlineKeyboardButton(texts['list_current_tasks'], callback_data='list_current_tasks'))
+        reply.add(InlineKeyboardButton(texts['list_completed_tasks'], callback_data='list_completed_tasks'))
         reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
         send_removing_message(msg.from_user.id, texts['tasks_menu'], reply_markup=reply)
         remove_msgs(msg.from_user.id, True)
@@ -245,7 +341,7 @@ def admin_main_menu_handler(msg: Message):
         bot.set_state('list_documents', msg.from_user.id)
     elif msg.text == texts['requests']:
         me = DbUser.get(msg.from_user.id)
-        query = Request.select().where(Request.executor==me).order_by(-Request.date)
+        query = Request.select().where(Request.executor == me).order_by(-Request.date)
         pager = EntityPager(msg.from_user.id, query, lambda e: texts['actions'], lambda e: e.id, 'request_actions',
                             per_page=1)
         pager.first_page()
@@ -261,11 +357,12 @@ def admin_main_menu_handler(msg: Message):
             return
 
         date = entity.date.strftime('%H:%M %d.%m.%Y')
-        by = f'{entity.added_by.name} (<i>@{bot.get_chat(entity.added_by.user_id).username}</i>)'
+        by = get_user_name(entity.added_by)
 
         text = texts['request_description'].format(request_number=entity.task_number,
                                                    request_text=entity.request_text,
                                                    request_by=by,
+                                                   request_status=texts[entity.request_status],
                                                    request_date=date)
 
         if entity.request_photo is None:
@@ -298,9 +395,14 @@ def admin_list_requests_handler(callback: CallbackQuery):
             request = Request.get(request_id)
 
             reply = InlineKeyboardMarkup(row_width=1)
-            reply.add(InlineKeyboardButton(texts['cancel_request'], callback_data='request_cancel:' + str(request_id)),
-                      InlineKeyboardButton(texts['complete_request'], callback_data='complete_request:' + str(request_id)),
-                      InlineKeyboardButton(texts['back'], callback_data='back'))
+            if request.request_status not in ('canceled', 'completed'):
+                reply.add(
+                    InlineKeyboardButton(texts['cancel_request'], callback_data='request_cancel:' + str(request_id)),
+                    InlineKeyboardButton(texts['complete_request'],
+                                         callback_data='complete_request:' + str(request_id)),
+                    InlineKeyboardButton(texts['redirect_request'],
+                                         callback_data='redirect_request:' + str(request_id)))
+            reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
 
             send_removing_message(callback.from_user.id, texts['choose_action'], reply_markup=reply)
             remove_msgs(callback.from_user.id, True)
@@ -309,10 +411,11 @@ def admin_list_requests_handler(callback: CallbackQuery):
         entity = pager.get_current_entities()[0]
 
         date = entity.date.strftime('%H:%M %d.%m.%Y')
-        by = f'{entity.added_by.name} (<i>@{bot.get_chat(entity.added_by.user_id).username}</i>)'
+        by = get_user_name(entity.added_by)
 
         text = texts['request_description'].format(request_number=entity.task_number,
                                                    request_text=entity.request_text,
+                                                   request_status=texts[entity.request_status],
                                                    request_by=by,
                                                    request_date=date)
 
@@ -329,14 +432,14 @@ def send_request_canceled(request: Request):
     texts = get_texts(DEFAULT_LANGUAGE)
 
     date = request.date.strftime('%H:%M %d.%m.%Y')
-    by = f'{request.added_by.name} (<i>@{bot.get_chat(request.added_by.user_id).username}</i>)'
-    executor = f'{request.executor.name} (<i>@{bot.get_chat(request.executor.user_id).username}</i>)'
+    by = get_user_name(request.added_by)
+    executor = get_user_name(request.executor)
 
     text = texts['cancel_request_notify'].format(request_number=request.task_number,
-                                                request_text=request.request_text,
-                                                request_by=by,
-                                                executor=executor,
-                                                request_date=date)
+                                                 request_text=request.request_text,
+                                                 request_by=by,
+                                                 executor=executor,
+                                                 request_date=date)
 
     reply = InlineKeyboardMarkup()
     reply.add(InlineKeyboardButton(texts['close_notify'], callback_data='notify_close'))
@@ -374,10 +477,11 @@ def admin_request_actions_handler(callback: CallbackQuery):
             entity = pager.get_current_entities()[0]
 
             date = entity.date.strftime('%H:%M %d.%m.%Y')
-            by = f'{entity.added_by.name} (<i>@{bot.get_chat(entity.added_by.user_id).username}</i>)'
+            by = get_user_name(entity.added_by)
 
             text = texts['request_description'].format(request_number=entity.task_number,
                                                        request_text=entity.request_text,
+                                                       request_status=texts[entity.request_status],
                                                        request_by=by,
                                                        request_date=date)
 
@@ -406,6 +510,130 @@ def admin_request_actions_handler(callback: CallbackQuery):
         send_removing_message(callback.from_user.id, texts['request_result_enter_text'])
         remove_msgs(callback.from_user.id, True)
         bot.set_state('request_result_text', callback.from_user.id)
+    elif data.startswith('redirect_request'):
+        request_id = int(data.split(':')[1])
+        bot.update_data({'request_id': request_id}, callback.from_user.id)
+
+        query = DbUser.select().where(DbUser.user_id != callback.from_user.id,
+                                      DbUser.role == 'admin')
+        pager = EntityPager(callback.from_user.id, query,
+                            lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
+        pager.first_page()
+        send_removing_message(callback.from_user.id, texts['redirect_request_choose'], reply_markup=pager())
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('redirect_request_choose', callback.from_user.id)
+
+
+@bot.callback_query_handler(state='redirect_request_choose', func=is_admin)
+def admin_redirect_request_choose_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+
+    query = DbUser.select().where(DbUser.user_id != callback.from_user.id,
+                                  DbUser.role == 'admin')
+    pager = EntityPager(callback.from_user.id, query,
+                        lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
+
+    result = pager.handle_callback(callback)
+    bot.answer_callback_query(callback.id)
+    if result:
+        if result == 'back':
+            request_id = storage.get_data(callback.from_user.id)['request_id']
+            request = Request.get(request_id)
+
+            reply = InlineKeyboardMarkup(row_width=1)
+            if request.request_status not in ('canceled', 'completed'):
+                reply.add(
+                    InlineKeyboardButton(texts['cancel_request'], callback_data='request_cancel:' + str(request_id)),
+                    InlineKeyboardButton(texts['complete_request'],
+                                         callback_data='complete_request:' + str(request_id)),
+                    InlineKeyboardButton(texts['redirect_request'],
+                                         callback_data='redirect_request:' + str(request_id)))
+            reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+
+            send_removing_message(callback.from_user.id, texts['choose_action'], reply_markup=reply)
+            remove_msgs(callback.from_user.id, True)
+            bot.set_state('request_actions', callback.from_user.id)
+        else:
+            user_id = int(callback.data.split(':')[1])
+
+            reply = InlineKeyboardMarkup()
+            reply.add(InlineKeyboardButton(texts['redirect_request'], callback_data='redirect'))
+            reply.add(InlineKeyboardButton(texts['cancel_redirect'], callback_data='cancel'))
+
+            user = DbUser.get(user_id)
+            name = get_user_name(user)
+            send_removing_message(callback.from_user.id, texts['sure_redirect'].format(name=name),
+                                  parse_mode='HTML', reply_markup=reply)
+            remove_msgs(callback.from_user.id, True)
+            bot.update_data({'user_id': user_id}, callback.from_user.id)
+
+            bot.set_state('sure_redirect', callback.from_user.id)
+    else:
+        try:  # May be not modified
+            bot.edit_message_reply_markup(callback.message.chat.id, callback.message.message_id, reply_markup=pager())
+        except ApiException:
+            pass
+
+
+def send_redirect_notify(user, request: Request):
+    texts = get_texts(DEFAULT_LANGUAGE)
+
+    e_name = get_user_name(request.executor)
+    r_name = get_user_name(user)
+    text = texts['redirected_request_notify'].format(request_number=request.task_number,
+                                                     redirected_by=r_name,
+                                                     request_text=request.request_text,
+                                                     executor_name=e_name) + '\n'
+
+    reply = InlineKeyboardMarkup()
+    reply.add(InlineKeyboardButton(texts['close_notify'], callback_data='notify_close'))
+
+    if request.request_photo is not None:
+        bot.send_photo(Config.GROUP_ID, request.request_photo.file_id, text, parse_mode='HTML')
+        bot.send_photo(request.executor.user_id, request.request_photo.file_id, text, parse_mode='HTML',
+                       reply_markup=reply)
+        bot.send_photo(request.added_by.user_id, request.request_photo.file_id, text, parse_mode='HTML',
+                       reply_markup=reply)
+    else:
+        bot.send_message(Config.GROUP_ID, text, parse_mode='HTML')
+        bot.send_message(request.executor.user_id, text, parse_mode='HTML',
+                         reply_markup=reply)
+        bot.send_message(request.added_by.user_id, text, parse_mode='HTML',
+                         reply_markup=reply)
+
+
+@bot.callback_query_handler(state='sure_redirect', func=is_admin)
+def admin_sure_redirect_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+
+    data = storage.get_data(callback.from_user.id)
+
+    if callback.data == 'cancel':
+        request_id = storage.get_data(callback.from_user.id)['request_id']
+        request = Request.get(request_id)
+
+        reply = InlineKeyboardMarkup(row_width=1)
+        if request.request_status not in ('canceled', 'completed'):
+            reply.add(InlineKeyboardButton(texts['cancel_request'], callback_data='request_cancel:' + str(request_id)),
+                      InlineKeyboardButton(texts['complete_request'],
+                                           callback_data='complete_request:' + str(request_id)),
+                      InlineKeyboardButton(texts['redirect_request'],
+                                           callback_data='redirect_request:' + str(request_id)))
+        reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+
+        send_removing_message(callback.from_user.id, texts['choose_action'], reply_markup=reply)
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('request_actions', callback.from_user.id)
+    elif callback.data == 'redirect':
+        request_id = storage.get_data(callback.from_user.id)['request_id']
+        user_id = storage.get_data(callback.from_user.id)['user_id']
+        request = Request.get(request_id)
+        request.executor_id = user_id
+        request.save()
+
+        send_redirect_notify(DbUser.get(callback.from_user.id), request)
+        admin_menu(callback.from_user.id)
+        bot.set_state('main_menu', callback.from_user.id)
 
 
 @bot.message_handler(state='request_result_text', func=is_admin)
@@ -459,8 +687,7 @@ def send_complete_request(request: Request):
     user = DbUser.get(request.executor.user_id)
 
     date = request.date.strftime('%H:%M %d.%m.%Y')
-    by = f'{request.added_by.name} (<i>@{bot.get_chat(request.added_by.user_id).username}</i>)'
-    executor = f'{request.executor.name} (<i>@{bot.get_chat(request.executor.user_id).username}</i>)'
+    executor = get_user_name(request.executor)
 
     text = texts['confirmed_request_notify'].format(request_number=request.task_number,
                                                     result_text=request.request_result_text,
@@ -503,6 +730,7 @@ def admin_result_invoice_handler(msg: Message):
 
     data = storage.get_data(msg.from_user.id)
     request = Request.get(data['request_id'])
+    request.request_status = 'completed'
     request.request_result_text = data['request_text']
     request.date = datetime.now()
     if data['request_photo'] is not None:
@@ -531,6 +759,7 @@ def admin_result_invoice_callback_handler(callback: CallbackQuery):
         request = Request.get(data['request_id'])
         request.request_result_text = data['request_text']
         request.date = datetime.now()
+        request.request_status = 'completed'
         if data['request_photo'] is not None:
             request.request_result_photo = Photo.get(Photo.file_id == data['request_photo'])
         request.save()
@@ -625,12 +854,14 @@ def admin_documents_calendar_handler(callback: CallbackQuery):
 
                 bot.set_state('list_invoices_docs', callback.from_user.id)
         elif doctype == 'tasks':
-            query = TaskWorker.select().join(Task).where(Task.deadline_date.between(date, date + timedelta(days=1)),
-                                                         Task.task_result_photo.is_null(False))
+            query = TaskWorker.select().distinct(TaskWorker.worker).join(Task).where(
+                Task.deadline_date.between(date, date + timedelta(days=1)),
+                Task.task_result_photo.is_null(False))
+
             bot.update_data({'date': [date.year, date.month, date.day]}, callback.from_user.id)
 
             pager = EntityPager(callback.from_user.id, query,
-                                lambda e: e.worker.name, lambda e: e.worker.user_id, 'user')
+                                lambda e: get_plain_user_name(e), lambda e: e.worker.user_id, 'user')
             pager.first_page()
             bot.send_message(callback.from_user.id, texts['doc_tasks_choose_user'], reply_markup=pager(),
                              parse_mode='HTML')
@@ -656,10 +887,11 @@ def admin_documents_tasks_user_handler(callback: CallbackQuery):
     data = storage.get_data(callback.from_user.id)
     date = datetime(*data['date'], 0, 0)
 
-    query = TaskWorker.select().join(Task).where(Task.deadline_date.between(date, date + timedelta(days=1)),
-                                                 Task.task_result_photo.is_null(False))
+    query = TaskWorker.select().distinct(TaskWorker.worker).join(Task).where(
+        Task.deadline_date.between(date, date + timedelta(days=1)),
+        Task.task_result_photo.is_null(False))
     pager = EntityPager(callback.from_user.id, query,
-                        lambda e: e.name, lambda e: e.user_id, 'user')
+                        lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
 
     result = pager.handle_callback(callback)
     bot.answer_callback_query(callback.id)
@@ -793,12 +1025,13 @@ def admin_list_tasks_docs_handler(callback: CallbackQuery):
     bot.answer_callback_query(callback.id)
     if result:
         if result == 'back':
-            query = TaskWorker.select().join(Task).where(Task.deadline_date.between(date, date + timedelta(days=1)),
-                                                         Task.task_result_photo.is_null(False))
+            query = TaskWorker.select().distinct(TaskWorker.worker).join(Task).where(
+                Task.deadline_date.between(date, date + timedelta(days=1)),
+                Task.task_result_photo.is_null(False))
             bot.update_data({'date': [date.year, date.month, date.day]}, callback.from_user.id)
 
             pager = EntityPager(callback.from_user.id, query,
-                                lambda e: e.worker.name, lambda e: e.worker.user_id, 'user')
+                                lambda e: get_plain_user_name(e), lambda e: e.worker.user_id, 'user')
             bot.send_message(callback.from_user.id, texts['doc_tasks_choose_user'], reply_markup=pager(),
                              parse_mode='HTML')
             remove_msgs(callback.from_user.id, True)
@@ -829,8 +1062,10 @@ def admin_tasks_menu_handler(callback: CallbackQuery):
         send_removing_message(callback.from_user.id, texts['new_task_enter_text'])
         remove_msgs(callback.from_user.id, True)
         bot.set_state('new_task_text', callback.from_user.id)
-    elif data == 'list_tasks':
-        query = Task.select().order_by(-Task.end_date)
+    elif data == 'list_completed_tasks':
+        bot.update_data({'search_mode': False}, callback.from_user.id)
+
+        query = build_search_query(callback.from_user.id)
         pager = EntityPager(callback.from_user.id, query, lambda e: texts['actions'], lambda e: e.id, 'task_actions',
                             per_page=1)
         pager.first_page()
@@ -862,6 +1097,43 @@ def admin_tasks_menu_handler(callback: CallbackQuery):
             send_removing_photo(callback.from_user.id, entity.task_photo.file_id, text,
                                 reply_markup=pager(), parse_mode='HTML')
         remove_msgs(callback.from_user.id, True)
+        bot.update_data({'tasks_filter': 'completed'}, callback.from_user.id)
+        bot.set_state('list_tasks', callback.from_user.id)
+    elif data == 'list_current_tasks':
+        query = Task.select().where((Task.task_status == 'initiated') |
+                                    (Task.task_status == 'wait_approval')).order_by(-Task.end_date)
+        pager = EntityPager(callback.from_user.id, query, lambda e: texts['actions'], lambda e: e.id, 'task_actions',
+                            per_page=1)
+        pager.first_page()
+        try:
+            entity = pager.get_current_entities()[0]
+        except IndexError:
+            bot.answer_callback_query(callback.id, texts['no_tasks_db'])
+            return
+
+        date = entity.end_date.strftime('%H:%M %d.%m.%Y')
+        text = texts['task_description'].format(task_number=entity.task_number,
+                                                task_text=entity.task_text,
+                                                task_end_date=date,
+                                                task_status=texts[entity.task_status])
+
+        task_workers = TaskWorker.select().where(TaskWorker.task == entity)
+
+        i = 1
+        for worker in task_workers:
+            user = worker.worker
+            chat = bot.get_chat(user.user_id)
+            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+            i += 1
+
+        if entity.task_photo is None:
+            send_removing_message(callback.from_user.id, text,
+                                  reply_markup=pager(), parse_mode='HTML')
+        else:
+            send_removing_photo(callback.from_user.id, entity.task_photo.file_id, text,
+                                reply_markup=pager(), parse_mode='HTML')
+        remove_msgs(callback.from_user.id, True)
+        bot.update_data({'tasks_filter': 'current'}, callback.from_user.id)
         bot.set_state('list_tasks', callback.from_user.id)
 
 
@@ -869,32 +1141,71 @@ def admin_tasks_menu_handler(callback: CallbackQuery):
 def admin_list_tasks_handler(callback: CallbackQuery):
     texts = get_user_texts(callback.from_user.id)
 
-    query = Task.select().order_by(-Task.end_date)
+    query = build_search_query(callback.from_user.id)
     pager = EntityPager(callback.from_user.id, query, lambda e: texts['actions'], lambda e: e.id, 'task_actions',
                         per_page=1)
     result = pager.handle_callback(callback)
     if result:
         if result == 'back':
+            if check_return_user_menu(callback.from_user.id):
+                return
             reply = InlineKeyboardMarkup(row_width=1)
             reply.add(InlineKeyboardButton(texts['make_new_task'], callback_data='make_new_task'))
-            reply.add(InlineKeyboardButton(texts['list_tasks'], callback_data='list_tasks'))
+            reply.add(InlineKeyboardButton(texts['list_current_tasks'], callback_data='list_current_tasks'))
+            reply.add(InlineKeyboardButton(texts['list_completed_tasks'], callback_data='list_completed_tasks'))
             reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
             send_removing_message(callback.from_user.id, texts['tasks_menu'], reply_markup=reply)
+
             remove_msgs(callback.from_user.id, True)
             bot.set_state('tasks_menu', callback.from_user.id)
-        else:
-            pass
+        elif result.startswith('task_actions'):
+            task_id = int(result.split(':')[1])
+            task = Task.get(task_id)
+
+            if task.task_status == 'canceled':
+                reply = InlineKeyboardMarkup(row_width=1)
+                reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+                send_removing_message(callback.from_user.id, texts['choose_action'], reply_markup=reply)
+                remove_msgs(callback.from_user.id, True)
+                bot.set_state('task_actions_menu', callback.from_user.id)
+            elif task.task_status == 'completed':
+                reply = InlineKeyboardMarkup(row_width=1)
+                reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+                name = get_user_name(task.end_by_worker)
+                if task.task_result_photo:
+                    send_removing_photo(callback.from_user.id, task.task_result_photo.file_id,
+                                        texts['task_report'].format(name=name,
+                                                                    result_text=task.task_result_text),
+                                        parse_mode='HTML',
+                                        reply_markup=reply)
+                else:
+                    send_removing_message(callback.from_user.id, texts['task_report'].format(name=name,
+                                                                                             result_text=task.task_result_text),
+                                          parse_mode='HTML',
+                                          reply_markup=reply)
+                remove_msgs(callback.from_user.id, True)
+                bot.set_state('task_actions_menu', callback.from_user.id)
+            elif task.task_status == 'initiated':
+                reply = InlineKeyboardMarkup(row_width=1)
+                reply.add(
+                    InlineKeyboardButton(texts['workers_actions'], callback_data='workers_actions:' + str(task_id)))
+                reply.add(InlineKeyboardButton(texts['add_worker'], callback_data='add_worker:' + str(task_id)))
+                reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+                send_removing_message(callback.from_user.id, texts['choose_action'],
+                                      reply_markup=reply)
+                remove_msgs(callback.from_user.id, True)
+                bot.set_state('task_actions_menu', callback.from_user.id)
     else:
         entity = pager.get_current_entities()[0]
 
         date = entity.end_date.strftime('%H:%M %d.%m.%Y')
-        deadline_date = entity.deadline_date.strftime('%H:%M %d.%m.%Y')
         if entity.task_status == 'completed':
+            deadline_date = entity.deadline_date.strftime('%H:%M %d.%m.%Y')
             text = texts['task_description_completed'].format(task_number=entity.task_number,
                                                               task_text=entity.task_text,
                                                               task_end_date=date,
                                                               task_status=texts[entity.task_status],
-                                                              task_end_by=entity.end_by_worker.name,
+                                                              task_end_by=get_user_name(entity.end_by_worker),
                                                               task_deadline_date=deadline_date)
         else:
             text = texts['task_description'].format(task_number=entity.task_number,
@@ -903,7 +1214,6 @@ def admin_list_tasks_handler(callback: CallbackQuery):
                                                     task_status=texts[entity.task_status])
 
         task_workers = TaskWorker.select().where(TaskWorker.task == entity)
-
         i = 1
         for worker in task_workers:
             user = worker.worker
@@ -917,6 +1227,451 @@ def admin_list_tasks_handler(callback: CallbackQuery):
             send_removing_photo(callback.from_user.id, entity.task_photo.file_id, text,
                                 reply_markup=pager(), parse_mode='HTML')
         remove_msgs(callback.from_user.id, True)
+
+
+@bot.callback_query_handler(state='task_actions_menu', func=is_admin)
+def admin_task_actions_menu_handler(callback: CallbackQuery):
+    data = callback.data
+    texts = get_user_texts(callback.from_user.id)
+
+    if data == 'back':
+        query = build_search_query(callback.from_user.id)
+        pager = EntityPager(callback.from_user.id, query, lambda e: texts['actions'], lambda e: e.id, 'task_actions',
+                            per_page=1)
+        try:
+            entity = pager.get_current_entities()[0]
+        except IndexError:
+            bot.answer_callback_query(callback.id, texts['no_tasks_db'])
+            return
+
+        date = entity.end_date.strftime('%H:%M %d.%m.%Y')
+        text = texts['task_description'].format(task_number=entity.task_number,
+                                                task_text=entity.task_text,
+                                                task_end_date=date,
+                                                task_status=texts[entity.task_status])
+
+        task_workers = TaskWorker.select().where(TaskWorker.task == entity)
+
+        i = 1
+        for worker in task_workers:
+            user = worker.worker
+            chat = bot.get_chat(user.user_id)
+            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+            i += 1
+
+        if entity.task_photo is None:
+            send_removing_message(callback.from_user.id, text,
+                                  reply_markup=pager(), parse_mode='HTML')
+        else:
+            send_removing_photo(callback.from_user.id, entity.task_photo.file_id, text,
+                                reply_markup=pager(), parse_mode='HTML')
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('list_tasks', callback.from_user.id)
+    elif data.startswith('workers_actions'):
+        task_id = int(data.split(':')[1])
+
+        query = DbUser.select().join(TaskWorker).where(TaskWorker.task_id == task_id)
+        pager = EntityPager(callback.from_user.id, query,
+                            lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
+        pager.first_page()
+        send_removing_message(callback.from_user.id, texts['choose_worker'], reply_markup=pager())
+        remove_msgs(callback.from_user.id, True)
+        bot.update_data({'task_id': task_id}, callback.from_user.id)
+        bot.set_state('task_actions_choose_worker', callback.from_user.id)
+    elif data.startswith('add_worker'):
+        task_id = int(data.split(':')[1])
+
+        query = DbUser.select().where(DbUser.role == 'worker', DbUser.user_id.not_in(
+            TaskWorker.select(TaskWorker.worker_id).where(TaskWorker.task_id == task_id)))
+        pager = EntityPager(callback.from_user.id, query,
+                            lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
+        pager.first_page()
+        send_removing_message(callback.from_user.id, texts['choose_worker'], reply_markup=pager())
+        remove_msgs(callback.from_user.id, True)
+        bot.update_data({'task_id': task_id}, callback.from_user.id)
+        bot.set_state('task_actions_add_worker', callback.from_user.id)
+
+
+@bot.callback_query_handler(state='task_actions_add_worker', func=is_admin)
+def admin_task_actions_choose_worker_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+    task_id = storage.get_data(callback.from_user.id)['task_id']
+
+    query = DbUser.select().where(DbUser.role == 'worker', DbUser.user_id.not_in(
+        TaskWorker.select(TaskWorker.worker_id).where(TaskWorker.task_id == task_id)))
+    pager = EntityPager(callback.from_user.id, query,
+                        lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
+    result = pager.handle_callback(callback)
+    if result:
+        if result == 'back':
+            reply = InlineKeyboardMarkup(row_width=1)
+            reply.add(InlineKeyboardButton(texts['workers_actions'], callback_data='workers_actions:' + str(task_id)))
+            reply.add(InlineKeyboardButton(texts['add_worker'], callback_data='add_worker:' + str(task_id)))
+            reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+            send_removing_message(callback.from_user.id, texts['choose_action'],
+                                  reply_markup=reply)
+            remove_msgs(callback.from_user.id, True)
+            bot.set_state('task_actions_menu', callback.from_user.id)
+        else:
+            user_id = int(callback.data.split(':')[1])
+            bot.update_data({'worker_id': user_id}, callback.from_user.id)
+
+            reply = InlineKeyboardMarkup()
+            reply.add(InlineKeyboardButton(texts['yes_text'], callback_data='yes_add'))
+            reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+
+            send_removing_message(callback.from_user.id,
+                                  texts['add_worker_confirm'].format(name=get_user_name(user_id)),
+                                  reply_markup=reply, parse_mode='HTML')
+            remove_msgs(callback.from_user.id, True)
+            bot.set_state('confirm_add_worker', callback.from_user.id)
+    else:
+        try:  # May be not modified
+            bot.edit_message_reply_markup(callback.message.chat.id, callback.message.message_id, reply_markup=pager())
+        except ApiException:
+            pass
+
+
+def send_added_worker_notify(task_id, worker_id):
+    texts = get_texts(DEFAULT_LANGUAGE)
+
+    task = Task.get(task_id)
+
+    date = task.end_date.strftime('%H:%M %d.%m.%Y')
+    text = texts['added_worker_notify'].format(task_number=task.task_number,
+                                               added_by=get_user_name(task.added_by), task_text=task.task_text,
+                                               end_date=date,
+                                               deleted_name=get_user_name(worker_id)) + '\n'
+    task_workers = TaskWorker.select().where(TaskWorker.task == task)
+
+    i = 1
+    for worker in task_workers:
+        user = worker.worker
+        chat = bot.get_chat(user.user_id)
+        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        i += 1
+
+    reply = InlineKeyboardMarkup()
+    reply.add(InlineKeyboardButton(texts['close_notify'], callback_data='notify_close'))
+
+    if task.task_photo is not None:
+        bot.send_photo(Config.GROUP_ID, task.task_photo.file_id, text, parse_mode='HTML')
+        for worker in task_workers:
+            bot.send_photo(worker.worker.user_id, task.task_photo.file_id, text, parse_mode='HTML',
+                           reply_markup=reply)
+    else:
+        bot.send_message(Config.GROUP_ID, text, parse_mode='HTML')
+        for worker in task_workers:
+            bot.send_message(worker.worker.user_id, text, parse_mode='HTML',
+                             reply_markup=reply)
+
+
+@bot.callback_query_handler(state='confirm_add_worker', func=is_admin)
+def admin_confirm_delete_worker_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+    c = callback.data
+
+    user_id = storage.get_data(callback.from_user.id)['worker_id']
+    task_id = storage.get_data(callback.from_user.id)['task_id']
+    if c == 'back':
+        task_id = storage.get_data(callback.from_user.id)['task_id']
+
+        query = DbUser.select().where(DbUser.role == 'worker', DbUser.user_id.not_in(
+            TaskWorker.select(TaskWorker.worker_id).where(TaskWorker.task_id == task_id)))
+        pager = EntityPager(callback.from_user.id, query,
+                            lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
+        send_removing_message(callback.from_user.id, texts['choose_worker'], reply_markup=pager())
+        remove_msgs(callback.from_user.id, True)
+        bot.update_data({'task_id': task_id}, callback.from_user.id)
+        bot.set_state('task_actions_add_worker', callback.from_user.id)
+    elif c == 'yes_add':
+        TaskWorker.create(worker_id=user_id, task_id=task_id)
+        bot.answer_callback_query(callback.id, texts['added_worker'])
+        send_added_worker_notify(task_id, user_id)
+
+        reply = InlineKeyboardMarkup(row_width=1)
+        reply.add(InlineKeyboardButton(texts['workers_actions'], callback_data='workers_actions:' + str(task_id)))
+        reply.add(InlineKeyboardButton(texts['add_worker'], callback_data='add_worker:' + str(task_id)))
+        reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+        send_removing_message(callback.from_user.id, texts['choose_action'],
+                              reply_markup=reply)
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('task_actions_menu', callback.from_user.id)
+
+
+@bot.callback_query_handler(state='task_actions_choose_worker', func=is_admin)
+def admin_task_actions_choose_worker_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+    task_id = storage.get_data(callback.from_user.id)['task_id']
+
+    query = DbUser.select().join(TaskWorker).where(TaskWorker.task_id == task_id)
+    pager = EntityPager(callback.from_user.id, query,
+                        lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
+    result = pager.handle_callback(callback)
+    if result:
+        if result == 'back':
+            reply = InlineKeyboardMarkup(row_width=1)
+            reply.add(InlineKeyboardButton(texts['workers_actions'], callback_data='workers_actions:' + str(task_id)))
+            reply.add(InlineKeyboardButton(texts['add_worker'], callback_data='add_worker:' + str(task_id)))
+            reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+            send_removing_message(callback.from_user.id, texts['choose_action'],
+                                  reply_markup=reply)
+            remove_msgs(callback.from_user.id, True)
+            bot.set_state('task_actions_menu', callback.from_user.id)
+        else:
+            user_id = int(callback.data.split(':')[1])
+            bot.update_data({'worker_id': user_id}, callback.from_user.id)
+
+            reply = InlineKeyboardMarkup(row_width=1)
+            reply.add(InlineKeyboardButton(texts['replace_worker'], callback_data='replace_worker'))
+            reply.add(InlineKeyboardButton(texts['delete_worker'], callback_data='delete_worker'))
+            reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+
+            send_removing_message(callback.from_user.id,
+                                  texts['choose_worker_action'].format(name=get_user_name(user_id)), reply_markup=reply,
+                                  parse_mode='HTML')
+            remove_msgs(callback.from_user.id, True)
+            bot.set_state('task_worker_actions', callback.from_user.id)
+    else:
+        try:  # May be not modified
+            bot.edit_message_reply_markup(callback.message.chat.id, callback.message.message_id, reply_markup=pager())
+        except ApiException:
+            pass
+
+
+@bot.callback_query_handler(state='task_worker_actions', func=is_admin)
+def admin_task_worker_actions_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+
+    data = storage.get_data(callback.from_user.id)
+    c = callback.data
+    if c == 'delete_worker':
+        task_id = data['task_id']
+        count = TaskWorker.select().where(TaskWorker.task_id == task_id).count()
+        if count == 1:
+            bot.answer_callback_query(callback.id, texts['no_delete_last_worker'])
+        else:
+            worker = DbUser.get(data['worker_id'])
+            reply = InlineKeyboardMarkup()
+            reply.add(InlineKeyboardButton(texts['yes_text'], callback_data='yes_delete'))
+            reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+
+            send_removing_message(callback.from_user.id,
+                                  texts['delete_worker_confirm'].format(name=get_user_name(worker)),
+                                  reply_markup=reply, parse_mode='HTML')
+            remove_msgs(callback.from_user.id, True)
+            bot.set_state('confirm_delete_worker', callback.from_user.id)
+    elif c == 'replace_worker':
+        task_id = data['task_id']
+
+        query = DbUser.select().where(DbUser.role == 'worker', DbUser.user_id.not_in(
+            TaskWorker.select(TaskWorker.worker_id).where(TaskWorker.task_id == task_id)))
+        pager = EntityPager(callback.from_user.id, query,
+                            lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user',
+                            save_prefix='replace_worker_page')
+        pager.first_page()
+        send_removing_message(callback.from_user.id, texts['choose_worker_to_replace'], reply_markup=pager())
+        remove_msgs(callback.from_user.id, True)
+        bot.update_data({'task_id': task_id}, callback.from_user.id)
+        bot.set_state('task_actions_replace_worker', callback.from_user.id)
+    elif c == 'back':
+        task_id = storage.get_data(callback.from_user.id)['task_id']
+
+        query = DbUser.select().join(TaskWorker).where(TaskWorker.task_id == task_id)
+        pager = EntityPager(callback.from_user.id, query,
+                            lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user', save_prefix='replace_page')
+        send_removing_message(callback.from_user.id, texts['choose_worker'], reply_markup=pager())
+        remove_msgs(callback.from_user.id, True)
+        bot.update_data({'task_id': task_id}, callback.from_user.id)
+        bot.set_state('task_actions_choose_worker', callback.from_user.id)
+
+
+@bot.callback_query_handler(state='task_actions_replace_worker', func=is_admin)
+def task_actions_replace_worker_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+    task_id = storage.get_data(callback.from_user.id)['task_id']
+
+    query = DbUser.select().join(TaskWorker).where(TaskWorker.task_id == task_id)
+    pager = EntityPager(callback.from_user.id, query,
+                        lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user', save_prefix='replace_page')
+    result = pager.handle_callback(callback)
+    if result:
+        if result == 'back':
+            user_id = storage.get_data(callback.from_user.id)['worker_id']
+
+            reply = InlineKeyboardMarkup(row_width=1)
+            reply.add(InlineKeyboardButton(texts['replace_worker'], callback_data='replace_worker'))
+            reply.add(InlineKeyboardButton(texts['delete_worker'], callback_data='delete_worker'))
+            reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+
+            send_removing_message(callback.from_user.id,
+                                  texts['choose_worker_action'].format(name=get_user_name(user_id)), reply_markup=reply,
+                                  parse_mode='HTML')
+            remove_msgs(callback.from_user.id, True)
+            bot.set_state('task_worker_actions', callback.from_user.id)
+        else:
+            replaced_user_id = int(callback.data.split(':')[1])
+            bot.update_data({'replaced_worker_id': replaced_user_id}, callback.from_user.id)
+            user_id = storage.get_data(callback.from_user.id)['worker_id']
+
+            reply = InlineKeyboardMarkup()
+            reply.add(InlineKeyboardButton(texts['yes_text'], callback_data='yes_replace'))
+            reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+
+            send_removing_message(callback.from_user.id,
+                                  texts['replace_worker_confirm'].format(name=get_user_name(user_id),
+                                                                         replaced_name=get_user_name(replaced_user_id)),
+                                  reply_markup=reply, parse_mode='HTML')
+            remove_msgs(callback.from_user.id, True)
+            bot.set_state('confirm_replace_worker', callback.from_user.id)
+    else:
+        try:  # May be not modified
+            bot.edit_message_reply_markup(callback.message.chat.id, callback.message.message_id, reply_markup=pager())
+        except ApiException:
+            pass
+
+
+def send_deleted_worker_notify(task_id, worker_id):
+    texts = get_texts(DEFAULT_LANGUAGE)
+
+    task = Task.get(task_id)
+
+    date = task.end_date.strftime('%H:%M %d.%m.%Y')
+    text = texts['deleted_worker_notify'].format(task_number=task.task_number,
+                                                 added_by=get_user_name(task.added_by), task_text=task.task_text,
+                                                 end_date=date,
+                                                 deleted_name=get_user_name(worker_id)) + '\n'
+    task_workers = TaskWorker.select().where(TaskWorker.task == task)
+
+    i = 1
+    for worker in task_workers:
+        user = worker.worker
+        chat = bot.get_chat(user.user_id)
+        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        i += 1
+
+    reply = InlineKeyboardMarkup()
+    reply.add(InlineKeyboardButton(texts['close_notify'], callback_data='notify_close'))
+
+    if task.task_photo is not None:
+        bot.send_photo(Config.GROUP_ID, task.task_photo.file_id, text, parse_mode='HTML')
+        bot.send_photo(worker_id, task.task_photo.file_id, text, parse_mode='HTML', reply_markup=reply)
+        for worker in task_workers:
+            bot.send_photo(worker.worker.user_id, task.task_photo.file_id, text, parse_mode='HTML',
+                           reply_markup=reply)
+    else:
+        bot.send_message(Config.GROUP_ID, text, parse_mode='HTML')
+        bot.send_message(worker_id, text, parse_mode='HTML', reply_markup=reply)
+        for worker in task_workers:
+            bot.send_message(worker.worker.user_id, text, parse_mode='HTML',
+                             reply_markup=reply)
+
+
+def send_replaced_worker_notify(task_id, replaced_user_id, user_id):
+    texts = get_texts(DEFAULT_LANGUAGE)
+
+    task = Task.get(task_id)
+
+    date = task.end_date.strftime('%H:%M %d.%m.%Y')
+    text = texts['replaced_worker_notify'].format(task_number=task.task_number,
+                                    added_by=get_user_name(task.added_by), task_text=task.task_text,
+                                    end_date=date,
+                                    name=get_user_name(user_id),
+                                    replaced_name=get_user_name(replaced_user_id)) + '\n'
+    task_workers = TaskWorker.select().where(TaskWorker.task == task)
+
+    i = 1
+    for worker in task_workers:
+        user = worker.worker
+        chat = bot.get_chat(user.user_id)
+        text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        i += 1
+
+    reply = InlineKeyboardMarkup()
+    reply.add(InlineKeyboardButton(texts['close_notify'], callback_data='notify_close'))
+
+    if task.task_photo is not None:
+        bot.send_photo(Config.GROUP_ID, task.task_photo.file_id, text, parse_mode='HTML')
+        bot.send_photo(user_id, task.task_photo.file_id, text, parse_mode='HTML', reply_markup=reply)
+        for worker in task_workers:
+            bot.send_photo(worker.worker.user_id, task.task_photo.file_id, text, parse_mode='HTML',
+                           reply_markup=reply)
+    else:
+        bot.send_message(Config.GROUP_ID, text, parse_mode='HTML')
+        bot.send_message(user_id, text, parse_mode='HTML', reply_markup=reply)
+        for worker in task_workers:
+            bot.send_message(worker.worker.user_id, text, parse_mode='HTML',
+                             reply_markup=reply)
+
+
+@bot.callback_query_handler(state='confirm_replace_worker', func=is_admin)
+def admin_confirm_replace_worker_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+    c = callback.data
+
+    user_id = storage.get_data(callback.from_user.id)['worker_id']
+    replaced_user_id = storage.get_data(callback.from_user.id)['replaced_worker_id']
+    task_id = storage.get_data(callback.from_user.id)['task_id']
+    if c == 'back':
+
+        query = DbUser.select().where(DbUser.role == 'worker', DbUser.user_id.not_in(
+            TaskWorker.select(TaskWorker.worker_id).where(TaskWorker.task_id == task_id)))
+        pager = EntityPager(callback.from_user.id, query,
+                            lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user',
+                            save_prefix='replace_worker_page')
+        send_removing_message(callback.from_user.id, texts['choose_worker_to_replace'], reply_markup=pager())
+        remove_msgs(callback.from_user.id, True)
+        bot.update_data({'task_id': task_id}, callback.from_user.id)
+        bot.set_state('task_actions_replace_worker', callback.from_user.id)
+    elif c == 'yes_replace':
+        TaskWorker.update(worker_id=replaced_user_id).where(TaskWorker.task_id == task_id,
+                                                            TaskWorker.worker_id == user_id).execute()
+        bot.answer_callback_query(callback.id, texts['replaced_worker'])
+        send_replaced_worker_notify(task_id, replaced_user_id, user_id)
+
+        reply = InlineKeyboardMarkup(row_width=1)
+        reply.add(InlineKeyboardButton(texts['workers_actions'], callback_data='workers_actions:' + str(task_id)))
+        reply.add(InlineKeyboardButton(texts['add_worker'], callback_data='add_worker:' + str(task_id)))
+        reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+        send_removing_message(callback.from_user.id, texts['choose_action'],
+                              reply_markup=reply)
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('task_actions_menu', callback.from_user.id)
+
+
+@bot.callback_query_handler(state='confirm_delete_worker', func=is_admin)
+def admin_confirm_delete_worker_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+    c = callback.data
+
+    user_id = storage.get_data(callback.from_user.id)['worker_id']
+    task_id = storage.get_data(callback.from_user.id)['task_id']
+    if c == 'back':
+
+        reply = InlineKeyboardMarkup(row_width=1)
+        reply.add(InlineKeyboardButton(texts['replace_worker'], callback_data='replace_worker'))
+        reply.add(InlineKeyboardButton(texts['delete_worker'], callback_data='delete_worker'))
+        reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+
+        send_removing_message(callback.from_user.id, texts['choose_worker_action'].format(name=get_user_name(user_id)),
+                              reply_markup=reply,
+                              parse_mode='HTML')
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('task_worker_actions', callback.from_user.id)
+    elif c == 'yes_delete':
+        TaskWorker.delete().where(TaskWorker.task_id == task_id,
+                                  TaskWorker.worker_id == user_id).execute()
+        bot.answer_callback_query(callback.id, texts['deleted_worker'])
+        send_deleted_worker_notify(task_id, user_id)
+
+        reply = InlineKeyboardMarkup(row_width=1)
+        reply.add(InlineKeyboardButton(texts['workers_actions'], callback_data='workers_actions:' + str(task_id)))
+        reply.add(InlineKeyboardButton(texts['add_worker'], callback_data='add_worker:' + str(task_id)))
+        reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+        send_removing_message(callback.from_user.id, texts['choose_action'],
+                              reply_markup=reply)
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('task_actions_menu', callback.from_user.id)
 
 
 @bot.message_handler(state='new_task_text', func=is_admin)
@@ -1036,7 +1791,7 @@ def send_cancel_task_notify(task: Task):
 
     date = task.end_date.strftime('%H:%M %d.%m.%Y')
     text = texts['cancel_task_notify'].format(task_number=task.task_number,
-                                              added_by=task.added_by.name, task_text=task.task_text,
+                                              added_by=get_user_name(task.added_by), task_text=task.task_text,
                                               end_date=date) + '\n'
     task_workers = TaskWorker.select().where(TaskWorker.task == task)
 
@@ -1062,12 +1817,54 @@ def send_cancel_task_notify(task: Task):
                              reply_markup=reply)
 
 
+def create_notifies(task: Task):
+    texts = get_texts(DEFAULT_LANGUAGE)
+
+    date = task.end_date.strftime('%H:%M %d.%m.%Y')
+
+    name = get_user_name(task.added_by)
+    text_hour = texts['notify_one_hour'].format(task_number=task.task_number,
+                                                added_by=name, task_text=task.task_text,
+                                                end_date=date) + '\n'
+    text_day = texts['notify_one_day'].format(task_number=task.task_number,
+                                              added_by=name, task_text=task.task_text,
+                                              end_date=date) + '\n'
+    text_half = texts['notify_half_time'].format(task_number=task.task_number,
+                                                 added_by=name, task_text=task.task_text,
+                                                 end_date=date) + '\n'
+    text_expired = texts['notify_expired'].format(task_number=task.task_number,
+                                                  added_by=name, task_text=task.task_text,
+                                                  end_date=date) + '\n'
+    task_workers = TaskWorker.select().where(TaskWorker.task == task)
+
+    i = 1
+    for worker in task_workers:
+        user = worker.worker
+        chat = bot.get_chat(user.user_id)
+        text_hour += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        text_day += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        text_half += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        text_expired += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+        i += 1
+
+    if task.end_date - datetime.now() > timedelta(hours=1):
+        TaskNotify.create(task=task, notify_date=task.end_date - timedelta(hours=1), notify_text=text_hour)
+    if task.end_date - datetime.now() > timedelta(days=1):
+        TaskNotify.create(task=task, notify_date=task.end_date - timedelta(days=1), notify_text=text_day)
+
+    half = task.end_date - datetime.now()
+    half = half.total_seconds() // 2
+
+    TaskNotify.create(task=task, notify_date=task.end_date - timedelta(seconds=half), notify_text=text_half)
+    TaskNotify.create(task=task, notify_date=task.end_date + timedelta(minutes=5), notify_text=text_expired)
+
+
 def send_task_notify(task: Task):
     texts = get_texts(DEFAULT_LANGUAGE)
 
     date = task.end_date.strftime('%H:%M %d.%m.%Y')
     text = texts['new_task_notify_group'].format(task_number=task.task_number,
-                                                 added_by=task.added_by.name, task_text=task.task_text,
+                                                 added_by=get_user_name(task.added_by), task_text=task.task_text,
                                                  end_date=date) + '\n'
     task_workers = TaskWorker.select().where(TaskWorker.task == task)
 
@@ -1115,12 +1912,13 @@ def admin_new_task_add_worker(callback: CallbackQuery):
 
             bot.answer_callback_query(callback.id, texts['created_task'])
             send_task_notify(task)
+            create_notifies(task)
             admin_menu(callback.from_user.id)
             bot.set_state('main_menu', callback.from_user.id)
     elif callback.data == 'add_worker':
         query = DbUser.select().where(DbUser.role == 'worker')
         pager = EntityPager(callback.from_user.id, query,
-                            lambda e: e.name, lambda e: e.user_id, 'user')
+                            lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
         pager.first_page()
         send_removing_message(callback.from_user.id, texts['choose_worker'], reply_markup=pager())
         remove_msgs(callback.from_user.id, True)
@@ -1133,7 +1931,7 @@ def admin_new_task_choose_worker(callback: CallbackQuery):
 
     query = DbUser.select().where(DbUser.role == 'worker')
     pager = EntityPager(callback.from_user.id, query,
-                        lambda e: e.name, lambda e: e.user_id, 'user')
+                        lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
     result = pager.handle_callback(callback)
     if result:
         if result == 'back':
@@ -1190,7 +1988,7 @@ def super_admin_users_menu_handler(callback: CallbackQuery):
 
     data = callback.data
     query = DbUser.select().where(DbUser.user_id != callback.from_user.id)
-    pager = EntityPager(callback.from_user.id, query, lambda e: str(e.name), lambda e: e.user_id, 'user')
+    pager = EntityPager(callback.from_user.id, query, lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
     result = pager.handle_callback(callback)
     if result:
         if result == 'back':
@@ -1206,13 +2004,14 @@ def super_admin_users_menu_handler(callback: CallbackQuery):
             reply = InlineKeyboardMarkup(row_width=1)
             if user_entity.role == 'worker':
                 reply.add(InlineKeyboardButton(texts['user_menu_make_admin'], callback_data='make_admin'))
+                reply.add(InlineKeyboardButton(texts['reports'], callback_data='worker_reports'))
             else:
                 reply.add(InlineKeyboardButton(texts['user_menu_make_worker'], callback_data='make_worker'))
             reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
 
             username = bot.get_chat(user).username
             send_removing_message(callback.from_user.id,
-                                  texts['user_menu_entity'].format(name=user_entity.name,
+                                  texts['user_menu_entity'].format(name=get_user_name(user_entity),
                                                                    username=username,
                                                                    role=texts[user_entity.role]),
                                   reply_markup=reply, parse_mode='HTML')
@@ -1223,6 +2022,28 @@ def super_admin_users_menu_handler(callback: CallbackQuery):
             bot.edit_message_reply_markup(callback.message.chat.id, callback.message.message_id, reply_markup=pager())
         except ApiException:
             pass
+
+
+def search_reply(user_id):
+    texts = get_user_texts(user_id)
+
+    reply = InlineKeyboardMarkup()
+    data = storage.get_data(user_id)
+
+    if not data['search_date']:
+        reply.add(InlineKeyboardButton(texts['no_selected_date'], callback_data='choose_date'))
+    else:
+        date = f"{texts['date']}: {datetime(*data['search_date']).strftime('%d.%m.%Y')}"
+        reply.add(InlineKeyboardButton(date, callback_data='choose_date'))
+
+    if not data['search_status']:
+        reply.add(InlineKeyboardButton(texts['no_selected_status'], callback_data='choose_status'))
+    else:
+        reply.add(InlineKeyboardButton('🔰 ' + texts[data['search_status']], callback_data='choose_status'))
+
+    reply.add(InlineKeyboardButton(texts['search'], callback_data='search'))
+    reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+    return reply
 
 
 @bot.callback_query_handler(state='users_menu_entity', func=is_super_admin)
@@ -1270,11 +2091,177 @@ def user_menu_entity_handler(callback: CallbackQuery):
             bot.set_state('change_role_menu', callback.from_user.id)
     elif data == 'back':
         query = DbUser.select().where(DbUser.user_id != callback.from_user.id)
-        pager = EntityPager(callback.from_user.id, query, lambda e: str(e.name), lambda e: e.user_id, 'user')
+        pager = EntityPager(callback.from_user.id, query, lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
 
         send_removing_message(callback.from_user.id, texts['users_menu'], reply_markup=pager())
         remove_msgs(callback.from_user.id, True)
         bot.set_state('users_menu', callback.from_user.id)
+    elif data == 'worker_reports':
+        bot.update_data({'search_date': None, 'search_status': None}, callback.from_user.id)
+
+        send_removing_message(callback.from_user.id, texts['enter_search_params'], parse_mode='HTML',
+                              reply_markup=search_reply(callback.from_user.id))
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('search_params', callback.from_user.id)
+
+
+def build_search_query(user_id):
+    data = storage.get_data(user_id)
+    filter = data.get('tasks_filter', 'completed')
+
+    if not data.get('search_mode', False):
+        if filter == 'completed':
+            query = Task.select().where((Task.task_status == 'completed') |
+                                        (Task.task_status == 'canceled')).order_by(-Task.end_date)
+        else:
+            query = Task.select().where((Task.task_status == 'initiated') |
+                                        (Task.task_status == 'wait_approval')).order_by(-Task.end_date)
+    else:
+        query = Task.select().join(TaskWorker)
+        where_query = (TaskWorker.worker_id == data['search_user'])
+        if data['search_date']:
+            date = datetime(*data['search_date'])
+            where_query &= (Task.created_at.between(date, date + timedelta(days=1)))
+        if data['search_status']:
+            where_query &= (Task.task_status == data['search_status'])
+
+        query = query.where(where_query).order_by(-Task.end_date)
+
+    return query
+
+
+@bot.callback_query_handler(state='search_params', func=is_admin)
+def admin_search_params_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+    c = callback.data
+
+    if c == 'choose_status':
+        reply = InlineKeyboardMarkup()
+        reply.add(InlineKeyboardButton(texts['completed'], callback_data='completed'))
+        reply.add(InlineKeyboardButton(texts['initiated'], callback_data='initiated'))
+        reply.add(InlineKeyboardButton(texts['canceled'], callback_data='canceled'))
+        reply.add(InlineKeyboardButton(texts['wait_approval'], callback_data='wait_approval'))
+        reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+
+        send_removing_message(callback.from_user.id, texts['choose_search_status'], parse_mode='HTML',
+                              reply_markup=reply)
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('search_params_status', callback.from_user.id)
+    if c == 'choose_date':
+        calendar = CalendarView(callback.from_user.id, need_back=True)
+
+        send_removing_message(callback.from_user.id, texts['choose_search_date'], reply_markup=calendar())
+        remove_msgs(callback.from_user.id, True)
+
+        bot.update_data(calendar.get_data(), callback.from_user.id)
+        bot.set_state('search_params_date', callback.from_user.id)
+    elif c == 'search':
+        bot.update_data({'search_mode': True, 'search_user': storage.get_data(callback.from_user.id)['selected']},
+                        callback.from_user.id)
+
+        query = build_search_query(callback.from_user.id)
+        pager = EntityPager(callback.from_user.id, query, lambda e: texts['actions'], lambda e: e.id, 'task_actions',
+                            per_page=1)
+        pager.first_page()
+        try:
+            entity = pager.get_current_entities()[0]
+        except IndexError:
+            bot.answer_callback_query(callback.id, texts['no_tasks_db'])
+            return
+
+        date = entity.end_date.strftime('%H:%M %d.%m.%Y')
+        text = texts['task_description'].format(task_number=entity.task_number,
+                                                task_text=entity.task_text,
+                                                task_end_date=date,
+                                                task_status=texts[entity.task_status])
+
+        task_workers = TaskWorker.select().where(TaskWorker.task == entity)
+
+        i = 1
+        for worker in task_workers:
+            user = worker.worker
+            chat = bot.get_chat(user.user_id)
+            text += str(i) + ') <b>' + user.name + '</b> (<i>@' + chat.username + '</i>).\n'
+            i += 1
+
+        if entity.task_photo is None:
+            send_removing_message(callback.from_user.id, text,
+                                  reply_markup=pager(), parse_mode='HTML')
+        else:
+            send_removing_photo(callback.from_user.id, entity.task_photo.file_id, text,
+                                reply_markup=pager(), parse_mode='HTML')
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('list_tasks', callback.from_user.id)
+
+    elif c == 'back':
+        user = storage.get_data(callback.from_user.id)['selected']
+        user_entity = DbUser.get(user)
+
+        bot.update_data({'selected': user}, callback.from_user.id)
+        reply = InlineKeyboardMarkup(row_width=1)
+        if user_entity.role == 'worker':
+            reply.add(InlineKeyboardButton(texts['user_menu_make_admin'], callback_data='make_admin'))
+            reply.add(InlineKeyboardButton(texts['reports'], callback_data='worker_reports'))
+        else:
+            reply.add(InlineKeyboardButton(texts['user_menu_make_worker'], callback_data='make_worker'))
+        reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+
+        username = bot.get_chat(user).username
+        send_removing_message(callback.from_user.id,
+                              texts['user_menu_entity'].format(name=get_user_name(user_entity),
+                                                               username=username,
+                                                               role=texts[user_entity.role]),
+                              reply_markup=reply, parse_mode='HTML')
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('users_menu_entity', callback.from_user.id)
+
+
+@bot.callback_query_handler(state='search_params_status', func=is_admin)
+def admin_search_params_status_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+
+    c = callback.data
+    if c == 'back':
+        send_removing_message(callback.from_user.id, texts['enter_search_params'], parse_mode='HTML',
+                              reply_markup=search_reply(callback.from_user.id))
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('search_params', callback.from_user.id)
+    elif c in ('completed', 'canceled', 'initiated', 'wait_approval'):
+        bot.update_data({'search_status': c}, callback.from_user.id)
+        send_removing_message(callback.from_user.id, texts['enter_search_params'], parse_mode='HTML',
+                              reply_markup=search_reply(callback.from_user.id))
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('search_params', callback.from_user.id)
+
+
+@bot.callback_query_handler(state='search_params_date', func=is_admin)
+def admin_search_params_date_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+
+    data = storage.get_data(callback.from_user.id)
+    calendar = CalendarView(callback.from_user.id, data['calendar_year'], data['calendar_month'], need_back=True)
+
+    result = calendar.handle_callback(callback)
+    bot.update_data(calendar.get_data(), callback.from_user.id)
+
+    if result == 'answer_callback':
+        bot.answer_callback_query(callback.id)
+    elif result == 'redraw':
+        bot.edit_message_reply_markup(callback.message.chat.id, callback.message.message_id, reply_markup=calendar())
+        bot.answer_callback_query(callback.id)
+    elif result == 'choose':
+        c = calendar.get_data_list()
+        bot.update_data({'search_date': c}, callback.from_user.id)
+        send_removing_message(callback.from_user.id, texts['enter_search_params'], parse_mode='HTML',
+                              reply_markup=search_reply(callback.from_user.id))
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('search_params', callback.from_user.id)
+
+    elif result == 'back':
+        send_removing_message(callback.from_user.id, texts['enter_search_params'], parse_mode='HTML',
+                              reply_markup=search_reply(callback.from_user.id))
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('search_params', callback.from_user.id)
 
 
 @bot.callback_query_handler(state='change_role_menu', func=is_super_admin)
@@ -1290,59 +2277,19 @@ def change_role_menu_handler(callback: CallbackQuery):
         reply = InlineKeyboardMarkup(row_width=1)
         if user_entity.role == 'worker':
             reply.add(InlineKeyboardButton(texts['user_menu_make_admin'], callback_data='make_admin'))
+            reply.add(InlineKeyboardButton(texts['reports'], callback_data='worker_reports'))
         else:
             reply.add(InlineKeyboardButton(texts['user_menu_make_worker'], callback_data='make_worker'))
         reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
 
         username = bot.get_chat(user).username
         send_removing_message(callback.from_user.id,
-                              texts['user_menu_entity'].format(name=user_entity.name,
+                              texts['user_menu_entity'].format(name=get_user_name(user_entity),
                                                                username=username,
                                                                role=texts[user_entity.role]),
                               reply_markup=reply, parse_mode='HTML')
         remove_msgs(callback.from_user.id, True)
         bot.set_state('users_menu_entity', callback.from_user.id)
-
-
-@bot.callback_query_handler(func=is_super_admin)
-def super_admin_callback_handler(callback: CallbackQuery):
-    texts = get_user_texts(callback.from_user.id)
-
-    data = callback.data
-    add_data = None
-    if ':' in data:
-        add_data = data.split(':')[-1]
-        data = data.split(':')[0]
-
-    try:
-        request_data = storage.get_data(int(add_data))
-    except:
-        return
-
-    if data == 'add_request_decline':
-        remove_msg(callback.from_user.id, callback.message.id)
-        send_removing_message(int(add_data), texts['user_request_declined'])
-        remove_msgs(int(add_data), True)
-        bot.answer_callback_query(callback.id, texts['user_declined'])
-    elif data == 'add_request_worker':
-        remove_msg(callback.from_user.id, callback.message.id)
-        send_removing_message(int(add_data), texts['user_request_worker'],
-                              reply_markup=worker_menu_reply(int(add_data)))
-        bot.set_state('main_menu', int(add_data))
-
-        remove_msgs(int(add_data), True)
-        bot.answer_callback_query(callback.id, texts['user_worker'])
-
-        DbUser.create(user_id=int(add_data), role='worker', language=DEFAULT_LANGUAGE, name=request_data['name'])
-    elif data == 'add_request_admin':
-        remove_msg(callback.from_user.id, callback.message.id)
-        send_removing_message(int(add_data), texts['user_request_admin'], reply_markup=admin_menu_reply(int(add_data)))
-        bot.set_state('main_menu', int(add_data))
-
-        remove_msgs(int(add_data), True)
-        bot.answer_callback_query(callback.id, texts['user_admin'])
-
-        DbUser.create(user_id=int(add_data), role='admin', language=DEFAULT_LANGUAGE, name=request_data['name'])
 
 
 @bot.message_handler(func=is_admin)

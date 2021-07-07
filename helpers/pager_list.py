@@ -81,6 +81,7 @@ class InlineKeyboardPager(metaclass=ABCMeta):
         self._user_id = user_id
         self._row_width = row_width
         self._no_element_button = no_element_button
+        self._save_prefix = 'pager_page'
 
         self._page = 0
         self._load_page()
@@ -89,13 +90,13 @@ class InlineKeyboardPager(metaclass=ABCMeta):
         """
         Save current page to storage
         """
-        storage.update_data(self._user_id, data={'page': self._page})
+        storage.update_data(self._user_id, data={self._save_prefix: self._page})
 
     def _load_page(self):
         """
         Load current page from storage
         """
-        self._page = storage.get_data(self._user_id, default={}).get('page', 0)
+        self._page = storage.get_data(self._user_id, default={}).get(self._save_prefix, 0)
 
     @property
     @abstractmethod

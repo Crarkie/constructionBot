@@ -2,9 +2,12 @@ import os
 import time
 
 import requests
+import telebot.apihelper
 from playhouse.postgres_ext import PostgresqlExtDatabase
 from telebot import TeleBot
 from peewee import *
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+
 from config import Config
 from datetime import datetime
 from typing import Tuple as TupleType
@@ -30,7 +33,8 @@ class Photo(BaseModel):
         return f'files/'
 
     def _get_relative_path(self):
-        return os.path.join(self._get_base_dir(), str(self.date.year), str(self.date.month), str(self.date.day), str(self.file_id) + '.jpg')
+        return os.path.join(self._get_base_dir(), str(self.date.year), str(self.date.month), str(self.date.day),
+                            str(self.file_id) + '.jpg')
 
     def get_photo_file(self):
         return open(self._get_relative_path(), 'rb')
@@ -65,6 +69,7 @@ class User(BaseModel):
     language = CharField(default='ru')
     name = CharField(max_length=128, default=default_name)
 
+
 def default_task_text():
     return 'Нет описания.'
 
@@ -87,11 +92,11 @@ def request_states():
 
 
 def begin_task_state():
-    return task_states()[0]
+    return 'initiated'
 
 
 def begin_request_state():
-    return request_states()[0]
+    return 'initiated'
 
 
 def get_task_number():
@@ -103,6 +108,7 @@ class Task(BaseModel):
     task_number = CharField(unique=True, default=get_task_number)
     added_by = ForeignKeyField(User)
     end_date = DateTimeField(default=None, null=True)
+    created_at = DateTimeField(default=datetime.now)
     deadline_date = DateTimeField(default=None, null=True)
     task_text = TextField(default=default_task_text)
     task_photo = ForeignKeyField(Photo, null=True, default=None)
@@ -113,7 +119,7 @@ class Task(BaseModel):
 
 
 class TaskNotify(BaseModel):
-    task = ForeignKeyField(Task)
+    task = ForeignKeyField(Task, backref='notifies', on_delete='CASCADE')
     notify_date = DateTimeField()
     notify_text = TextField()
 

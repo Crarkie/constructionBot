@@ -44,6 +44,9 @@ class CalendarView:
     def get_data(self):
         return {'calendar_day': self._day, 'calendar_month': self._month, 'calendar_year': self._year}
 
+    def get_data_list(self):
+        return (self._year, self._month, self._day)
+
     def get_datetime(self):
         if self._day is None:
             return None

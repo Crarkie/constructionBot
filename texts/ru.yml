@@ -2,6 +2,9 @@ welcome_text: '✳️ Для работы с ботом, введите ваше
 send_add_request: "*️⃣ Отправить заявку для работы с ботом под именем <b>{name}</b>?"
 confirm_name: "*️⃣ Ваше имя <b>{name}</b>. Подвердить?"
 yes_text: "✅ Да"
+deleted_worker: "✅ Работник успешно снят с задачи."
+added_worker: "✅ Работник успешно добавлен к задаче."
+replaced_worker: "✅ Работник успешно заменен."
 change_name: '◀️ Изменить имя'
 add_request_sent: '🆗 Ваша заявка отправлена. Ожидайте сообщение об одобрении администратором.'
 enter_your_name: '️⃣ Введите ваше ФИО:'
@@ -28,12 +31,14 @@ users: "👥 Пользователи"
 menu: "🔵 Выберите необходимый пункт меню:"
 
 create_request: "📃 Создать заявку"
+add_worker: "👷‍♂️ Добавить исполнителя"
 my_tasks: "📕 Мои задачи"
 
 users_menu: '🔵 Выберите необходимого пользователя:'
-user_menu_entity: "Пользователь:\n<b>{name}</b> (<i>@{username}</i>).\nРоль: <b>{role}</b>."
+user_menu_entity: "Пользователь:\n<b>{name}</b>.\nРоль: <b>{role}</b>."
 user_menu_make_admin: '👨‍💼 Сделать администратором'
 user_menu_make_worker: '👷‍♂ Сделать работником'
+add_worker_confirm: "Вы уверены, что хотите добавить в задачу исполнителя?:\n👷‍♂ {name}"
 
 still_have_tasks: "🔴 Работник имеет <i>незавершенные задачи</i>, поэтому не может быть переведен в администраторы."
 still_have_requests: "🔴 Админ имеет <i>незавершенные заявки</i>, поэтому не может быть переведен в работники."
@@ -47,12 +52,20 @@ wait_approval: 'Ожидает одобрения'
 
 request_cancel: '❌ Запросить отмену'
 cancel_request: "❌ Отменить заявку"
+cancel_redirect: "❌ Не перенаправлять"
+sure_redirect: "🔵 Вы уверены, что хотите перенаправить заявку на {name}?"
 complete_task: '✅ Завершить задачу'
 complete_request: '✅ Завершить заявку'
+redirect_request: "➡️ Перенаправить заявку"
+redirect_request_choose: "🔵 Выберите необходимого администратора:"
 choose_action: '🔵 Выберите необходимое действие:'
+task_report: "👷‍♂ Главный исполнитель:\n<b>{name}</b>\n📃 Текст отчета:\n<i>{result_text}</i>"
+workers_actions: '👷‍♂ Действия с исполнителями'
+reports: "🔍 Поиск задач"
 
 make_new_task: '🆕 Создать новую задачу'
-list_tasks: '📕 Список текущих задач'
+list_current_tasks: '📕 Список текущих задач'
+list_completed_tasks: '📕 Список завершенных задач'
 tasks_menu: '🔵 Выберите необходимый пункт меню задач:'
 
 new_task_enter_text: '⬇️ Введите описание задачи:'
@@ -76,8 +89,15 @@ new_task_no_workers: '🔴 Для задачи не выбран ни один �
 choose_worker: '👷‍♂ Выберите исполнителя для задачи:'
 created_task: '✅ Задача успешно добавлена.'
 no_tasks_db: '⭕ В базе отсутствуют задачи.'
+no_delete_last_worker: '⭕ Вы не можете удалить последнего исполнителя.'
 no_my_tasks: '⭕ В базе отсуствуют ваши задачи.'
 no_requests_db: '⭕ В базе отсуствуют ваши заявки.'
+choose_worker_action: "👷‍♂ <b>{name}</b>\n🔵 Выберите действие с исполнителем:"
+choose_worker_to_replace: "🔵 Выберите исполнителя на замену:"
+delete_worker_confirm: "❓ Вы уверены что хотите удалить исполнителя?\n👷‍♂ <b>{name}</b>"
+replace_worker_confirm: "❓ Вы уверены что хотите заменить исполнителя?\n👷‍♂ <b>{name}</b> на 👷‍♂ <b>{replaced_name}</b>"
+replace_worker: "🔀 Заменить исполнителя"
+delete_worker: "❌ Удалить исполнителя"
 
 close_notify: "❎ Скрыть уведомление"
 new_task_notify_group: "👨‍💼 <b>{added_by}</b> добавил новую задачу:\n📕 №<b>{task_number}</b>\n✏️ Описание:\n<i>{task_text}</i>\n📅 Крайняя дата:\n<b>{end_date}</b>\n👷‍♂ Исполнители:"
@@ -134,7 +154,22 @@ doc_tasks_choose_user: "🔵 Список пользователей, котор
 no_photo_docs_task: "🔴 Нет фото отчетов от данного работника в этот день."
 
 new_request_notify: "👷‍♂ <b>{added_by}</b> добавил новую заявку на снабжение:\n📕 №<b>{request_number}</b>\n✏️ Описание:\n<i>{request_text}</i>\n\n👨‍💼 Исполнитель:\n<b>{executor_name}</b>"
+redirected_request_notify: "👨‍💼 <b>{redirected_by}</b> перенаправил заявку на снабжение:\n📕 №<b>{request_number}</b>\n✏️ Описание:\n<i>{request_text}</i>\n\n👨‍💼 Исполнитель:\n<b>{executor_name}</b>"
 
-request_description: "📕 №<b>{request_number}</b>\n📅 Дата заявки:\n<b>{request_date}</b>\n✏ Текст заявки:\n<i>{request_text}</i>\n👷‍♂ Запросил:\n<b>{request_by}</b>"
+request_description: "📕 №<b>{request_number}</b>\n🔰 Текущий статус:\n<b>{request_status}</b>\n📅 Дата заявки:\n<b>{request_date}</b>\n✏ Текст заявки:\n<i>{request_text}</i>\n👷‍♂ Запросил:\n<b>{request_by}</b>"
 
+notify_half_time: "❗️Напоминаем о том, что до крайнего времени заверщения задачи осталась <b>половина времени</b>\n📕 №<b>{task_number}</b>\n✏️ Описание:\n<i>{task_text}</i>\n📅 Крайняя дата:\n<b>{end_date}</b>\n👷‍♂ Исполнители:"
+notify_one_day: "❗️Напоминаем о том, что до крайнего времени заверщения задачи остались <b>одни сутки</b>\n📕 №<b>{task_number}</b>\n✏️ Описание:\n<i>{task_text}</i>\n📅 Крайняя дата:\n<b>{end_date}</b>\n👷‍♂ Исполнители:"
+notify_one_hour: "❗️Напоминаем о том, что до крайнего времени заверщения задачи остался <b>один час</b>\n📕 №<b>{task_number}</b>\n✏️ Описание:\n<i>{task_text}</i>\n📅 Крайняя дата:\n<b>{end_date}</b>\n👷‍♂ Исполнители:"
+notify_expired: "‼️ ️Задача не была выполнена в срок\n📕 №<b>{task_number}</b>\n✏️ Описание:\n<i>{task_text}</i>\n📅 Крайняя дата:\n<b>{end_date}</b>\n👷‍♂ Исполнители:"
 
+deleted_worker_notify: "👨‍💼 <b>{added_by}</b> удалил исполнителя из задачи:\n📕 №<b>{task_number}</b>\n✏️ Описание:\n<i>{task_text}</i>\n📅 Крайняя дата:\n<b>{end_date}</b>\n❌ Удаленный исполнитель:\n👷‍♂ {deleted_name}\n👷‍♂ Исполнители:"
+added_worker_notify: "👨‍💼 <b>{added_by}</b> добавил исполнителя к задаче:\n📕 №<b>{task_number}</b>\n✏️ Описание:\n<i>{task_text}</i>\n📅 Крайняя дата:\n<b>{end_date}</b>\n✳️ Добавленный исполнитель:\n👷‍♂ {deleted_name}\n👷‍♂ Исполнители:"
+replaced_worker_notify: "👨‍💼 <b>{added_by}</b> заменил исполнителя в задаче:\n📕 №<b>{task_number}</b>\n✏️ Описание:\n<i>{task_text}</i>\n📅 Крайняя дата:\n<b>{end_date}</b>\n❌️ Прошлый исполнитель:\n👷‍♂ {name}\n✳️ Новый исполнитель:\n👷‍♂ {replaced_name}\n👷‍♂ Исполнители:"
+enter_search_params: "🔍 Выберите параметры поиска:"
+no_selected_date: "📅 Без определенной даты"
+date: "📅 Дата"
+no_selected_status: "🔰 Без определенного статуса"
+search: "🔍 Поиск"
+choose_search_status: "🔍 Выберите статус задач:"
+choose_search_date: "🔍 Выберите дату задач:"

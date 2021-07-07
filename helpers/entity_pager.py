@@ -1,5 +1,5 @@
 from texts import DEFAULT_LANGUAGE
-from pager_list import *
+from helpers.pager_list import *
 from common.models import *
 
 CITIES_PER_PAGE = 5
@@ -7,7 +7,7 @@ CITIES_PER_PAGE = 5
 
 class EntityPager(BackBottomButtonsMixin, InlineKeyboardPager):
     def __init__(self, user_id: int, query, field_name_func, id_func, element_prefix: str, row_width: int = 1, per_page: int = 5,
-                 no_element_button=False):
+                 no_element_button=False, save_prefix: str = None):
         super().__init__(user_id, row_width, no_element_button)
         try:
             self._lang = str(DbUser.get(user_id).language)
@@ -19,6 +19,8 @@ class EntityPager(BackBottomButtonsMixin, InlineKeyboardPager):
         self._id_func = id_func
         self._element_prefix = element_prefix
         self._per_page = per_page
+        if save_prefix:
+            self._save_prefix = save_prefix
         self._prefetch = list(query.paginate(self._page + 1, self._per_page).execute())
 
     def _save_page(self):

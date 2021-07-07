@@ -1,5 +1,5 @@
 import bot
-from admin_handlers import super_admin_main_menu
+from handlers.admin_handlers import super_admin_main_menu
 from bot import *
 from common.tg_utils import *
 from texts import get_texts, DEFAULT_LANGUAGE

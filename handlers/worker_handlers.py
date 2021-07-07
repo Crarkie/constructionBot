@@ -1,12 +1,36 @@
 import bot
 from bot import *
 from common.tg_utils import *
-from entity_pager import EntityPager
+from helpers.entity_pager import EntityPager
 from texts import get_texts, DEFAULT_LANGUAGE
 from common.models import *
 from common.models_helpers import *
 
 WORKER_MAIN_MENU = ['create_request', 'my_tasks']
+
+
+def get_user_name(user: Union[int, DbUser]):
+    if isinstance(user, int):
+        user = DbUser.get(user)
+
+    username = bot.get_chat(user.user_id).username
+    if not username:
+        s = f'{user.name} (username отс.)'
+    else:
+        s = f'{user.name} (<i>@{username}</i>)'
+    return s
+
+
+def get_plain_user_name(user: Union[int, DbUser]):
+    if isinstance(user, int):
+        user = DbUser.get(user)
+
+    username = bot.get_chat(user.user_id).username
+    if not username:
+        s = f'{user.name} (username отс.)'
+    else:
+        s = f'{user.name} (@{username})'
+    return s
 
 
 def worker_menu_reply(user_id):
@@ -105,7 +129,7 @@ def worker_request_attach_photo_handler(msg: Message):
 
     query = DbUser.select().where(DbUser.role == 'admin')
     pager = EntityPager(msg.from_user.id, query,
-                        lambda e: e.name, lambda e: e.user_id, 'user')
+                        lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
     pager.first_page()
     send_removing_message(msg.from_user.id, texts['request_choose_admin'], reply_markup=pager())
     remove_msgs(msg.from_user.id, True)
@@ -121,7 +145,7 @@ def worker_request_attach_photo_callback_handler(callback: CallbackQuery):
 
         query = DbUser.select().where(DbUser.role == 'admin')
         pager = EntityPager(callback.from_user.id, query,
-                            lambda e: e.name, lambda e: e.user_id, 'user')
+                            lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
         pager.first_page()
         send_removing_message(callback.from_user.id, texts['request_choose_admin'], reply_markup=pager())
         remove_msgs(callback.from_user.id, True)
@@ -134,7 +158,7 @@ def worker_request_choose_admin(callback: CallbackQuery):
 
     query = DbUser.select().where(DbUser.role == 'admin')
     pager = EntityPager(callback.from_user.id, query,
-                        lambda e: e.name, lambda e: e.user_id, 'user')
+                        lambda e: get_plain_user_name(e), lambda e: e.user_id, 'user')
     result = pager.handle_callback(callback)
     if result:
         if result == 'back':
@@ -161,8 +185,8 @@ def worker_request_choose_admin(callback: CallbackQuery):
 def send_request_notify(request: Request):
     texts = get_texts(DEFAULT_LANGUAGE)
 
-    a_name = f'{request.added_by.name} (<i>@{bot.get_chat(request.added_by.user_id).username}</i>)'
-    e_name = f'{request.executor.name} (<i>@{bot.get_chat(request.executor.user_id).username}</i>)'
+    a_name = get_user_name(request.added_by)
+    e_name = get_user_name(request.executor)
     text = texts['new_request_notify'].format(request_number=request.task_number,
                                               added_by=a_name,
                                               request_text=request.request_text,
@@ -311,7 +335,7 @@ def worker_task_actions_handler(callback: CallbackQuery):
         task = Task.get(task_id)
         worker = DbUser.get(callback.from_user.id)
         chat = bot.get_chat(worker.user_id)
-        worker_name = f'{worker.name} (<i>@{chat.username}</i>)'
+        worker_name = get_user_name(worker)
 
         reply = InlineKeyboardMarkup(row_width=1)
         reply.add(InlineKeyboardButton(texts['cancel_button'], callback_data='admin_action:cancel_task:' +
@@ -404,7 +428,7 @@ def send_complete_task(task_id, user_id, photo_id, invoice_id, result_text):
         InlineKeyboardButton(texts['cancel_confirm_task'], callback_data=f'admin_action:cancel_confirm_task:{task_id}'))
 
     chat = bot.get_chat(user_id)
-    name = f'{user.name} (<i>@{chat.username}</i>)'
+    name = get_user_name(user)
     if task.task_photo is None:
         bot.send_message(task.added_by.user_id, texts['completed_task'].format(worker_name=name,
                                                                                task_number=task.task_number,
