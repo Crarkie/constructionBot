@@ -1193,6 +1193,7 @@ def admin_list_tasks_handler(callback: CallbackQuery):
                 reply.add(
                     InlineKeyboardButton(texts['workers_actions'], callback_data='workers_actions:' + str(task_id)))
                 reply.add(InlineKeyboardButton(texts['add_worker'], callback_data='add_worker:' + str(task_id)))
+                reply.add(InlineKeyboardButton(texts['cancel_task'], callback_data='cancel_task:' + str(task_id)))
                 reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
                 send_removing_message(callback.from_user.id, texts['choose_action'],
                                       reply_markup=reply)
@@ -1245,6 +1246,7 @@ def admin_task_actions_menu_handler(callback: CallbackQuery):
             entity = pager.get_current_entities()[0]
         except IndexError:
             bot.answer_callback_query(callback.id, texts['no_tasks_db'])
+            admin_menu(callback.from_user.id)
             return
 
         date = entity.end_date.strftime('%H:%M %d.%m.%Y')
@@ -1293,6 +1295,51 @@ def admin_task_actions_menu_handler(callback: CallbackQuery):
         remove_msgs(callback.from_user.id, True)
         bot.update_data({'task_id': task_id}, callback.from_user.id)
         bot.set_state('task_actions_add_worker', callback.from_user.id)
+    elif data.startswith('cancel_task'):
+        task_id = int(data.split(':')[1])
+
+        reply = InlineKeyboardMarkup()
+        reply.add(InlineKeyboardButton(texts['cancel_button'], callback_data='yes_cancel:' + str(task_id)))
+        reply.add(InlineKeyboardButton(texts['back'], callback_data='back:' + str(task_id)))
+
+        send_removing_message(callback.from_user.id, texts['sure_cancel'], parse_mode='HTML', reply_markup=reply)
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('sure_cancel', callback.from_user.id)
+
+
+@bot.callback_query_handler(state='sure_cancel', func=is_admin)
+def admin_sure_cancel_handler(callback: CallbackQuery):
+    texts = get_user_texts(callback.from_user.id)
+
+    c = callback.data
+    if c.startswith('yes_cancel'):
+        task_id = int(c.split(':')[1])
+
+        task = Task.get(task_id)
+        task.task_status = 'canceled'
+        task.save()
+
+        bot.answer_callback_query(callback.id, texts['canceled_ok'])
+        send_cancel_task_notify(task)
+
+        reply = InlineKeyboardMarkup(row_width=1)
+        reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+        send_removing_message(callback.from_user.id, texts['choose_action'], reply_markup=reply)
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('task_actions_menu', callback.from_user.id)
+    elif c.startswith('back'):
+        task_id = int(c.split(':')[1])
+
+        reply = InlineKeyboardMarkup(row_width=1)
+        reply.add(
+            InlineKeyboardButton(texts['workers_actions'], callback_data='workers_actions:' + str(task_id)))
+        reply.add(InlineKeyboardButton(texts['add_worker'], callback_data='add_worker:' + str(task_id)))
+        reply.add(InlineKeyboardButton(texts['cancel_task'], callback_data='cancel_task:' + str(task_id)))
+        reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
+        send_removing_message(callback.from_user.id, texts['choose_action'],
+                              reply_markup=reply)
+        remove_msgs(callback.from_user.id, True)
+        bot.set_state('task_actions_menu', callback.from_user.id)
 
 
 @bot.callback_query_handler(state='task_actions_add_worker', func=is_admin)
@@ -2057,7 +2104,9 @@ def user_menu_entity_handler(callback: CallbackQuery):
     if data == 'make_admin':
         d = storage.get_data(callback.from_user.id)
         user = DbUser.get(d['selected'])
-        if TaskWorker.select().where(TaskWorker.worker == user).exists():
+        if TaskWorker.select().where(TaskWorker.worker == user,
+                                     (TaskWorker.task.task_status == 'initiated') |
+                                     (TaskWorker.task.task_status == 'wait_approval')).exists():
             reply = InlineKeyboardMarkup()
             reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
             send_removing_message(callback.from_user.id, texts['still_have_tasks'], reply_markup=reply,
@@ -2076,7 +2125,7 @@ def user_menu_entity_handler(callback: CallbackQuery):
     elif data == 'make_worker':
         d = storage.get_data(callback.from_user.id)
         user = DbUser.get(d['selected'])
-        if Request.select().where(Request.executor == user).exists():
+        if Request.select().where(Request.executor == user, Request.request_status == 'initiated').exists():
             reply = InlineKeyboardMarkup()
             reply.add(InlineKeyboardButton(texts['back'], callback_data='back'))
             send_removing_message(callback.from_user.id, texts['still_have_requests'], reply_markup=reply,
